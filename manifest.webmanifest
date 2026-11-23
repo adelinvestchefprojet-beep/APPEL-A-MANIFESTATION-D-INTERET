@@ -1,0 +1,19 @@
+{
+  "name": "ADEL INVEST – Espace porteur de projet",
+  "short_name": "ADEL INVEST",
+  "description": "Enregistrez, gérez et valorisez vos projets fonciers.",
+  "lang": "fr",
+  "dir": "ltr",
+  "id": "./",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f4f7f5",
+  "theme_color": "#0b6b3a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
