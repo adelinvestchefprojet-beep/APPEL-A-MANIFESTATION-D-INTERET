@@ -1,7 +1,7 @@
 // Service worker ADEL INVEST : coque de l'application uniquement.
 // Les données (Supabase) et les scripts externes ne sont JAMAIS mis en cache.
-const VERSION = "adel-v1";
-const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png"];
+const VERSION = "adel-v6";
+const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
