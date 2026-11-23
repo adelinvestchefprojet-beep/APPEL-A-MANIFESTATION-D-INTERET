@@ -1442,4 +1442,13 @@ window.addEventListener("beforeinstallprompt", e => {
   e.preventDefault(); installEvt = e;
   if ($("installBar") || matchMedia("(display-mode: standalone)").matches) return;
   const bar = document.createElement("div"); bar.id = "installBar";
-  bar.style.cssText = "position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:60;background:var(--card);color:var(--ink);border:1px solid var(--g);border-radius:14px;padding:12px 14px;display:flex;gap:10px;align-items:center;box-shadow:0 6px 24px rgb
+  bar.style.cssText = "position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:60;background:var(--card);color:var(--ink);border:1px solid var(--g);border-radius:14px;padding:12px 14px;display:flex;gap:10px;align-items:center;box-shadow:0 6px 24px rgba(0,0,0,.25)";
+  bar.innerHTML = '<div style="flex:1;font-size:14px"><b>Installer ADEL INVEST</b><br><span style="color:var(--mu)">Accès rapide depuis votre écran d\'accueil.</span></div><button class="btn" id="installYes" type="button">Installer</button><button class="btn o" id="installNo" type="button" aria-label="Fermer">✕</button>';
+  document.body.appendChild(bar);
+  $("installNo").onclick = () => bar.remove();
+  $("installYes").onclick = async () => { bar.remove(); installEvt.prompt(); await installEvt.userChoice; installEvt = null; };
+});
+window.addEventListener("appinstalled", () => { $("installBar")?.remove(); toast("Application installée."); });
+</script>
+</body>
+</html>
