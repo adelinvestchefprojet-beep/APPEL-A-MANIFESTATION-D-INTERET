@@ -8,7 +8,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="format-detection" content="telephone=no">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="ADEL INVEST">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://slrqktjjusmvzusbevbr.supabase.co wss://slrqktjjusmvzusbevbr.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'">
@@ -272,7 +272,7 @@ dialog{max-height:85vh;max-height:85dvh;overflow:auto}
     <div class="logo">ADEL INVEST<small>Ensemble pour un foncier sécurisé</small></div>
     <a class="on" href="#" data-v="dash">Tableau de bord</a><a href="#" data-v="projet">Mon projet</a><a href="#" data-v="docs">Mes documents</a>
     <a href="#" data-v="archivage" id="mArch" class="hide">Archivage</a><a href="#" data-v="journal" id="mJour" class="hide">Journal des téléchargements</a>
-    <a href="#" data-v="messages">Mes messages</a><a href="#" data-v="journal_messages" id="mJournalMessages" class="hide">Journal des échanges</a><a href="#" data-v="actualites">Actualités</a><a href="#" data-v="support">Support</a><a href="#" data-v="settings">Paramètres</a>
+    <a href="#" data-v="messages">Mes messages</a><a href="#" data-v="journal_messages" id="mJournalMessages" class="hide">Journal des échanges</a><a href="#" data-v="actualites">Actualités</a><a href="#" data-v="settings">Paramètres</a>
     <a href="#" id="out">Déconnexion</a>
   </aside>
   <main>
@@ -396,7 +396,7 @@ $("signup").onsubmit = async e => {
   }
   const ins = await sb.from("fiches").insert({ user_id: session.user.id, ...projet }).select().single();
   if (ins.error) toast("Projet non enregistré : " + ins.error.message);
-  else await archiver(ins.data, client);
+  else { await archiver(ins.data, client); toast("Votre espace personnel a été créé."); }
   start();
 };
 $("login").onsubmit = async e => {
@@ -549,7 +549,7 @@ async function renderSettings() {
 }
 
 // ===== MESSAGERIE CLIENT / SUPERVISEUR / SUPER ADMIN =====
-// Table messages : id, sender_id, recipient_id, subject, content, is_read, created_at.
+// Table messages : id, sender_id, recipient_id, subject, content, read_at, created_at.
 // Table journal_communications : journalise les prises de contact WhatsApp.
 let activeMessageClientId = null;
 
@@ -572,12 +572,12 @@ function whatsappUrl(phone, message) {
 }
 async function logWhatsAppContact(clientId, phone, body) {
   const payload = {
-    client_user_id: clientId,
-    supervisor_id: user.id,
-    channel: "whatsapp",
-    phone: String(phone || ""),
-    body: String(body || "").trim() || "Prise de contact WhatsApp",
-    status: "initie"
+    client_id: clientId,
+    superviseur_id: user.id,
+    canal: "whatsapp",
+    direction: "sortant",
+    contenu: String(body || "").trim() || "Prise de contact WhatsApp",
+    statut: "initie"
   };
   const { error } = await sb.from("journal_communications").insert(payload);
   if (error) throw error;
@@ -586,8 +586,11 @@ async function logWhatsAppContact(clientId, phone, body) {
 const msgText = m => m?.content ?? "";
 const clientOf = (m, profiles) => profiles[m.sender_id]?.role === "porteur" ? m.sender_id : m.recipient_id;
 async function getSupervisorId() {
-  const { data, error } = await sb.from("profiles").select("id").in("role", ["admin", "super_admin"]).limit(1);
-  if (error || !data?.length) throw new Error("Aucun superviseur disponible.");
+  // Le superviseur affecté au client (table superviseur_clients), quel que soit son rôle
+  const a = await sb.from("superviseur_clients").select("superviseur_id").eq("client_id", user.id).limit(1);
+  if (!a.error && a.data?.length) return a.data[0].superviseur_id;
+  const { data, error } = await sb.from("profiles").select("id").neq("id", user.id).limit(1);
+  if (error || !data?.length) throw new Error("Aucun superviseur ne vous est encore affecté. Contactez ADEL INVEST.");
   return data[0].id;
 }
 
@@ -603,9 +606,9 @@ async function renderMessages() {
       $("grid").innerHTML = `<div class="card" style="grid-column:1/-1"><h4>Mes messages</h4><p class="err">Impossible de charger vos messages : ${esc(error.message)}</p><p style="color:var(--mu)">Vérifiez la table messages et ses politiques de sécurité Supabase.</p></div>`;
       return;
     }
-    const unread = (data || []).filter(m => m.sender_id !== user.id && !m.is_read);
-    if (unread.length) await sb.from("messages").update({ is_read: true })
-      .eq("recipient_id", user.id).eq("is_read", false);
+    const unread = (data || []).filter(m => m.sender_id !== user.id && !m.read_at);
+    if (unread.length) await sb.from("messages").update({ read_at: new Date().toISOString() })
+      .eq("recipient_id", user.id).is("read_at", null);
     $("grid").innerHTML = `<div class="card" style="grid-column:1/-1">
       <h4>Ma conversation avec ADEL INVEST</h4>
       <p style="color:var(--mu)">Envoyez une demande, posez une question et suivez les réponses de votre superviseur dans cet espace sécurisé.</p>
@@ -685,7 +688,7 @@ async function renderMessages() {
         <h4>Conversations (${clients.length})</h4>
         ${clients.map(([id, msgs]) => {
           const p = profiles[id] || {}, last = msgs[0];
-          const pending = msgs.filter(m => m.sender_id === id && !m.is_read).length;
+          const pending = msgs.filter(m => m.sender_id === id && !m.read_at).length;
           const nm = [p.prenom,p.nom].filter(Boolean).join(" ") || p.email || "Client";
           return `<button type="button" data-message-client="${esc(id)}" class="cat ${id === activeMessageClientId ? "on" : ""}" style="display:block;width:100%;margin:6px 0;text-align:left">
             <b>${esc(nm)} ${pending ? `(${pending} non lu${pending > 1 ? "s" : ""})` : ""}</b>
@@ -728,8 +731,8 @@ async function renderMessages() {
       th.scrollTop = th.scrollHeight;
       if (matchMedia("(max-width:900px)").matches) th.closest("section").scrollIntoView({ block: "start" });
     }
-    await sb.from("messages").update({ is_read: true })
-      .eq("sender_id", activeMessageClientId).eq("is_read", false);
+    await sb.from("messages").update({ read_at: new Date().toISOString() })
+      .eq("sender_id", activeMessageClientId).eq("recipient_id", user.id).is("read_at", null);
     if (!readOnly) {
       $("replyAdminMessage").onsubmit = async e => {
         e.preventDefault();
@@ -795,8 +798,8 @@ async function renderCommunicationJournal() {
   }
   const profs = Object.fromEntries((pr.data || []).map(p => [p.id,p]));
   const rows = [
-    ...(jr.data || []).map(r => ({...r, kind:"WhatsApp", clientId:r.client_user_id, actorId:r.supervisor_id, created_at:r.created_at, content:r.body, status:r.status || "Contact initié"})),
-    ...(mr.data || []).map(m => ({...m, kind:"Messagerie ADEL", clientId:clientOf(m, profs), actorId:m.sender_id, created_at:m.created_at, content:m.content, status:m.is_read ? "Lu" : "Non lu"}))
+    ...(jr.data || []).map(r => ({...r, kind:"WhatsApp", clientId:r.client_id, actorId:r.superviseur_id, created_at:r.created_at, content:r.contenu, status:r.statut || "Contact initié"})),
+    ...(mr.data || []).map(m => ({...m, kind:"Messagerie ADEL", clientId:clientOf(m, profs), actorId:m.sender_id, created_at:m.created_at, content:m.content, status:m.read_at ? "Lu" : "Non lu"}))
   ].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
   $("grid").innerHTML = `<div class="card" style="grid-column:1/-1">
     <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
@@ -830,7 +833,6 @@ async function navigate(view) {
   if (view === "docs") return renderDocumentsPage();
   if (view === "messages") return renderMessages();
   if (view === "actualites") return renderDataPage("Actualités", "actualites", "Informations et actualités publiées sur ADEL INVEST.");
-  if (view === "support") return renderDataPage("Support", "support_tickets", "Suivi de vos demandes de support.");
   if (view === "settings") return renderSettings();
 }
 document.querySelectorAll("aside a[data-v]").forEach(a => a.onclick = e => { e.preventDefault(); navigate(a.dataset.v); });
@@ -843,6 +845,14 @@ async function start() {
   user = session.user;
   const p = await sb.from("profiles").select("*").eq("id", user.id).maybeSingle();
   profile = p.data || {};
+  if (!p.data) {
+    // Filet de sécurité : crée le profil du porteur à partir des infos saisies à l'inscription
+    const md = user.user_metadata || {};
+    const row = { id: user.id, email: user.email, prenom: md.prenom || "", nom: md.nom || "", telephone: md.telephone || "",
+      categorie_souhaitee: md.categorie || null, role: "porteur" };
+    const ins = await sb.from("profiles").insert(row).select().maybeSingle();
+    profile = ins.data || row;
+  }
   if (!profile.avatar_url && user.user_metadata?.avatar_url) profile.avatar_url = user.user_metadata.avatar_url;
   if (profile.categorie_souhaitee) chosen = profile.categorie_souhaitee;
   ["login", "signup", "sup", "recovery"].forEach(f => $(f).classList.add("hide")); $("app").classList.remove("hide");
@@ -1432,13 +1442,4 @@ window.addEventListener("beforeinstallprompt", e => {
   e.preventDefault(); installEvt = e;
   if ($("installBar") || matchMedia("(display-mode: standalone)").matches) return;
   const bar = document.createElement("div"); bar.id = "installBar";
-  bar.style.cssText = "position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:60;background:var(--card);color:var(--ink);border:1px solid var(--g);border-radius:14px;padding:12px 14px;display:flex;gap:10px;align-items:center;box-shadow:0 6px 24px rgba(0,0,0,.25)";
-  bar.innerHTML = '<div style="flex:1;font-size:14px"><b>Installer ADEL INVEST</b><br><span style="color:var(--mu)">Accès rapide depuis votre écran d\'accueil.</span></div><button class="btn" id="installYes" type="button">Installer</button><button class="btn o" id="installNo" type="button" aria-label="Fermer">✕</button>';
-  document.body.appendChild(bar);
-  $("installNo").onclick = () => bar.remove();
-  $("installYes").onclick = async () => { bar.remove(); installEvt.prompt(); await installEvt.userChoice; installEvt = null; };
-});
-window.addEventListener("appinstalled", () => { $("installBar")?.remove(); toast("Application installée."); });
-</script>
-</body>
-</html>
+  bar.style.cssText = "position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:60;background:var(--card);color:var(--ink);border:1px solid var(--g);border-radius:14px;padding:12px 14px;display:flex;gap:10px;align-items:center;box-shadow:0 6px 24px rgb
