@@ -290,7 +290,21 @@ dialog{max-height:85vh;max-height:85dvh;overflow:auto}
 const SUPABASE_URL = "https://slrqktjjusmvzusbevbr.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_xZ12ITUoSmqtY2axXDX29g_UPDco3Lk";
 // =======================
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// Session expirée / invalide (401) : déconnexion propre et retour à l'écran de connexion
+let _expired = false;
+async function sessionExpired() {
+  if (_expired) return; _expired = true;
+  try { toast("Session expirée. Veuillez vous reconnecter."); } catch {}
+  try { await sb.auth.signOut({ scope: "local" }); } catch {}
+  setTimeout(() => location.reload(), 1200);
+}
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  global: { fetch: async (url, opts) => {
+    const r = await fetch(url, opts);
+    if (r.status === 401 && !String(url).includes("/auth/v1/") && typeof user !== "undefined" && user) sessionExpired();
+    return r;
+  } }
+});
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const CATS = {
@@ -830,6 +844,7 @@ async function navigate(view) {
   if (view === "archivage") return (sa || space === "lecteur") ? renderArchivage() : navigate("dash");
   if (view === "journal") return sa ? renderJournal() : navigate("dash");
   if (view === "journal_messages") return sa ? renderCommunicationJournal() : navigate("dash");
+  if (view === "detail") return adm ? navigate("dash") : renderProjectDetail();
   if (view === "docs") return renderDocumentsPage();
   if (view === "messages") return renderMessages();
   if (view === "actualites") return renderDataPage("Actualités", "actualites", "Informations et actualités publiées sur ADEL INVEST.");
@@ -840,7 +855,8 @@ $("out").onclick = async e => { e.preventDefault(); await sb.auth.signOut(); loc
 
 async function start() {
   if (recovering) { showForm("recovery"); return; }
-  const { data: { session } } = await sb.auth.getSession();
+  const { data: { session }, error: sessErr } = await sb.auth.getSession();
+  if (sessErr) { await sb.auth.signOut({ scope: "local" }); return; }
   if (!session) return;
   user = session.user;
   const p = await sb.from("profiles").select("*").eq("id", user.id).maybeSingle();
@@ -1374,6 +1390,65 @@ $("grid").addEventListener("change", async e => {
   } catch (err) { toast("Photo non enregistrée : " + err.message); }
 });
 
+
+// ===== DÉTAIL DE MON PROJET (porteur) =====
+async function renderProjectDetail() {
+  if (!fiche) return navigate("projet");
+  setActiveMenu("projet");
+  const idx = Math.max(0, STEPS.findIndex(s => s[0] === fiche.statut));
+  const folder = `${user.id}/${fiche.id}`;
+  $("grid").innerHTML = `<div class="card" style="grid-column:1/-1"><p>Chargement du détail…</p></div>`;
+  // Le détail reste accessible même si le stockage des documents rencontre une erreur.
+  let docs = [];
+  let docsWarning = "";
+  try {
+    const dl = await sb.storage.from(DOCS_BUCKET).list(folder, {
+      limit: 100,
+      sortBy: { column: "created_at", order: "desc" }
+    });
+    if (dl.error) docsWarning = dl.error.message;
+    else docs = (dl.data || []).filter(f => f.name && f.id);
+  } catch (err) {
+    docsWarning = err?.message || "Impossible de charger les documents.";
+  }
+  const steps = STEPS.map((s, i) => `<div class="st ${i < idx ? "ok" : i === idx ? "cur" : ""}"><i>${i < idx ? "✓" : i + 1}</i><span>${s[1]}</span></div>`).join("");
+  const row = (k, v) => `<div><b>${k} :</b><span>${esc(v || "—")}</span></div>`;
+  $("grid").innerHTML = `<div style="grid-column:1/-1;display:grid;gap:12px;min-width:0">
+    <div><button class="btn o" id="backDash" type="button">← Retour à mon tableau de bord</button></div>
+    <div class="card">
+      <h4>${esc(fiche.titre || "Mon projet")}</h4>
+      <p style="margin:0 0 10px"><span class="chip s-${esc(fiche.statut)}">${esc(label(fiche.statut))}</span></p>
+      <div class="rows">
+        ${row("Catégorie", catName(fiche.categorie))}
+        ${row("Type de projet", fiche.type_projet)}
+        ${row("Localisation", fiche.localisation)}
+        ${row("Superficie", fiche.superficie ? fiche.superficie + " hectares" : "")}
+        ${row("Enregistré le", fmt(fiche.created_at))}
+        ${fiche.updated_at ? row("Dernière modification", fmt(fiche.updated_at)) : ""}
+      </div>
+      <div class="steps">${steps}</div>
+    </div>
+    <div class="card"><h4>Description</h4><p style="white-space:pre-wrap;margin:0">${esc(fiche.description || "Aucune description.")}</p></div>
+    <div class="card"><h4>Documents joints (${docs.length})</h4>
+      ${docsWarning ? `<p class="err">Les informations du projet sont disponibles, mais les documents n'ont pas pu être chargés : ${esc(docsWarning)}</p>` : ""}
+      ${docs.length ? docs.map((d, i) => `<div class="li"><div>${esc(d.name.replace(/^\d+_/, ""))}<small>Déposé le ${fmt(d.created_at)}</small></div><button class="btn" type="button" data-detail-doc="${i}">Ouvrir</button></div>`).join("") : (!docsWarning ? '<p style="color:var(--mu)">Aucun document joint pour le moment.</p>' : '')}
+      <p style="margin:12px 0 0"><button class="btn o" id="detailAddDoc" type="button">Joindre des documents</button></p>
+    </div>
+    <div class="card"><h4>Ma fiche projet</h4><div id="maFiche"></div></div>
+  </div>`;
+  $("backDash").onclick = () => navigate("dash");
+  $("detailAddDoc").onclick = () => navigate("docs");
+  $("grid").querySelectorAll("button[data-detail-doc]").forEach(b => b.onclick = async () => {
+    const f = docs[Number(b.dataset.detailDoc)]; if (!f) return;
+    b.disabled = true; b.textContent = "Préparation…";
+    const { data, error } = await sb.storage.from(DOCS_BUCKET).createSignedUrl(`${folder}/${f.name}`, 60);
+    b.disabled = false; b.textContent = "Ouvrir";
+    if (error) return toast("Ouverture impossible : " + error.message);
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  });
+  loadMaFiche();
+}
+
 async function renderDash() {
   const idx = Math.max(0, STEPS.findIndex(s => s[0] === fiche.statut));
   const cat = CATS[fiche.categorie]?.[0] || "—";
@@ -1391,7 +1466,7 @@ async function renderDash() {
       <div><b>Titre du projet :</b>${esc(fiche.titre)}</div><div><b>Type de projet :</b>${esc(fiche.type_projet || "—")}</div>
       <div><b>Catégorie :</b>${esc(cat)}</div><div><b>Localisation :</b>${esc(fiche.localisation || "—")}</div>
       <div><b>Superficie :</b>${esc(fiche.superficie || "—")} hectares</div><div><b>Enregistré le :</b>${fmt(fiche.created_at)}</div></div>
-      <div class="acts"><button class="btn">Voir le détail de mon projet</button><button class="btn o" id="edit">Modifier mon projet</button>
+      <div class="acts"><button class="btn" id="detail" type="button">Voir le détail de mon projet</button><button class="btn o" id="edit">Modifier mon projet</button>
       <button class="btn o" id="addd">Joindre des documents</button><button class="btn d" id="del">Supprimer mon projet</button></div></div>
       <div class="steps">${steps}</div></div></div>
     <div class="three">
@@ -1429,6 +1504,21 @@ async function renderDash() {
     if (t) { await sb.from("fiches").update({ titre: t, updated_at: new Date().toISOString() }).eq("id", fiche.id); start(); }
   };
   $("addd").onclick = () => navigate("docs");
+  $("detail").onclick = async () => {
+    const btn = $("detail");
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    const oldText = btn.textContent;
+    btn.textContent = "Ouverture du détail…";
+    try {
+      await navigate("detail");
+    } catch (err) {
+      console.error("[ADEL] Ouverture du détail impossible :", err);
+      toast("Impossible d'ouvrir le détail : " + (err?.message || "erreur inconnue"));
+      btn.disabled = false;
+      btn.textContent = oldText;
+    }
+  };
 }
 drawSCats();
 start();
